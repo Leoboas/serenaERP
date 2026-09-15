@@ -1,0 +1,8 @@
+aws_region       = "us-east-1"
+project_name     = "goverp-core-ai"
+environment      = "staging"
+availability_zones = ["us-east-1a", "us-east-1b"]
+budget_alert_email = ""
+budget_limit_usd   = 200
+api_image          = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-api:latest"
+worker_image       = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-worker:latest"
