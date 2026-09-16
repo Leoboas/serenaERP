@@ -15,6 +15,7 @@ class TenantModel(Base):
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(63), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="ATIVO")
+    cnpj: Mapped[str | None] = mapped_column(String(14), nullable=True)
     licitacoes: Mapped[list["LicitacaoModel"]] = relationship(back_populates="tenant")
 
 

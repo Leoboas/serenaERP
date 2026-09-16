@@ -7,14 +7,31 @@ from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
 from app.api import dependencies
+from app.infrastructure.auth.cognito import CognitoTokenVerifier
 from app.infrastructure.auth import cognito
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 @pytest.mark.asyncio
+async def test_development_token_uses_local_tenant_without_cognito() -> None:
+    settings = SimpleNamespace(
+        environment="development",
+        default_tenant_id=TENANT_ID,
+    )
+
+    claims = await CognitoTokenVerifier(settings).verify("dev-token")
+
+    assert claims == {
+        "sub": "local-development-user",
+        "custom:tenant_id": TENANT_ID,
+    }
+
+
+@pytest.mark.asyncio
 async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
     settings = SimpleNamespace(
+        environment="production",
         cognito_jwks_url="https://cognito.test/.well-known/jwks.json",
         cognito_issuer="https://cognito.test/pool",
         cognito_app_client_id="client-id",
