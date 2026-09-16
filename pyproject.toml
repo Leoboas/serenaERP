@@ -42,3 +42,6 @@ lint.ignore = ["B008"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.ruff.lint]
+ignore = ["EXE002"]
