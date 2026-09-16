@@ -3,7 +3,6 @@
 import sqlalchemy as sa
 from alembic import op
 
-
 revision = "0003_default_tenant_seed"
 down_revision = "0002_reporting_indexes"
 branch_labels = None

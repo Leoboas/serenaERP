@@ -7,8 +7,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
 from app.api import dependencies
-from app.infrastructure.auth.cognito import CognitoTokenVerifier
 from app.infrastructure.auth import cognito
+from app.infrastructure.auth.cognito import CognitoTokenVerifier
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
