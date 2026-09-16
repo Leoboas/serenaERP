@@ -36,12 +36,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 100
 target-version = "py311"
-lint.ignore = ["B008"]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["EXE002"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
-
-[tool.ruff.lint]
-ignore = ["EXE002"]
