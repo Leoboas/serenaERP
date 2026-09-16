@@ -1,149 +1,101 @@
-# goverp-core-ai
+# serenaERP
 
-ERP governamental multi-tenant com API assíncrona, fila de análise de IA, cache Redis e índices PostgreSQL orientados a relatórios. O frontend pode ser hospedado na Vercel e o backend cloud-native roda em ECS Fargate, RDS, ElastiCache e Cognito provisionados por Terraform.
+## Visão geral executiva
 
-## Arquitetura
+O **serenaERP** é uma plataforma GovTech cloud-native e multi-tenant para gestão e análise inteligente de licitações públicas municipais. A solução organiza o fluxo de criação, consulta, consolidação de gastos e análise assíncrona de licitações, mantendo a separação entre regras de negócio, casos de uso e adaptadores de infraestrutura.
 
-```mermaid
-flowchart LR
-    Frontend[Vercel Next.js/React] --> ALB[Application Load Balancer HTTPS]
-    ALB --> API[ECS Fargate API]
-    API --> DB[(RDS PostgreSQL)]
-    API --> Cache[(ElastiCache Redis)]
-    API --> Cognito[AWS Cognito JWT]
-    API --> Queue[Redis Celery Broker]
-    Queue --> Worker[ECS Fargate Worker]
-    Worker --> DB
-```
+O projeto foi estruturado para operar localmente com Docker Compose e para ser provisionado na AWS com ECS Fargate, RDS PostgreSQL, ElastiCache/Redis, Cognito e componentes de rede definidos em Terraform.
 
-- `app/api`: controllers FastAPI, dependências HTTP e schemas Pydantic; são adapters de entrada.
-- `app/domain`: entidades, Value Objects e interfaces abstratas; não importa frameworks.
-- `app/application`: DTOs e casos de uso que orquestram o negócio através das portas.
-- `app/infrastructure`: adapters concretos SQLAlchemy async, Redis, Celery e Cognito.
-- `app/db`: sessão async e aliases de compatibilidade para Alembic.
-- `app/models`: fachada de compatibilidade; o ORM canônico vive em `app/infrastructure/persistence`.
-- `app/workers`: entrypoints Celery que delegam ao application layer.
-- `migrations`: histórico Alembic.
-- `benchmarks`: evidências e metodologia de tuning.
-- `terraform/modules/ecs`: ALB, cluster Fargate, API, worker, secrets e autoscaling.
+## Destaques de arquitetura e engenharia
 
-## Decisões de design
+### Clean Architecture e DDD
 
-- **Multi-tenancy por tenant ID**: cada request exige `X-Tenant-ID`; todas as consultas CRUD e agregações filtram o `tenant_id`, evitando vazamento entre organizações.
-- **Pydantic v2**: valida limites de texto, valores positivos e precisão monetária antes de tocar no banco.
-- **SQLAlchemy async**: o pool async evita bloquear o event loop da API e mantém o mesmo modelo compatível com testes SQLite.
-- **Celery + Redis**: análise de IA é enfileirada; o worker simula 2 segundos e grava `ANALISADO` ou `ALERTA_RISCO`.
-- **Cache Redis**: relatório é isolado por tenant, expira em 60 segundos e é invalidado após criação de licitação.
+As dependências seguem o sentido da borda para o núcleo:
 
-## Clean Architecture e DDD
+- \`app/domain\`: entidades, value objects e contratos, sem dependências de FastAPI, SQLAlchemy, Pydantic ou Celery.
+- \`app/application\`: casos de uso e DTOs que dependem apenas do domínio e de suas portas.
+- \`app/api\`: adaptadores HTTP/FastAPI, autenticação e validação de entrada.
+- \`app/infrastructure\`: persistência SQLAlchemy, Redis, Celery e Cognito.
+- \`app/workers\`: entrada assíncrona que delega o processamento ao caso de uso.
 
-O fluxo de uma requisição segue `API -> Application -> Domain`, enquanto os adapters concretos implementam as portas definidas no domínio:
+O teste \`tests/test_architecture.py\` verifica automaticamente que o domínio não importa frameworks. Os contratos \`LicitacaoRepository\`, \`LicitacaoReportRepository\`, \`Cache\` e \`AnalysisJobPublisher\` abstraem banco, cache e mensageria; o adaptador SQLAlchemy fica limitado à infraestrutura.
 
-```text
-FastAPI/Pydantic
-    |
-    v
-Use Cases + DTOs  --->  Domain Entities + Repository Ports
-    |                              ^
-    v                              |
-SQLAlchemy/Redis/Celery/Cognito ------+
-```
+### Zero-Trust multi-tenancy
 
-As entidades `Licitacao` e `TenantId` são Python puro. O SQLAlchemy converte entre `LicitacaoModel` e a entidade; Redis e Celery são adapters substituíveis. Isso permite testar regras de negócio sem banco, fila ou AWS e mantém a infraestrutura fora do núcleo.
+\`TenantId\` é um Value Object imutável do domínio. Os casos de uso convertem o identificador recebido para esse tipo e os métodos de leitura e agregação do repositório recebem explicitamente o tenant, aplicando-o às consultas. Na borda HTTP, o \`X-Tenant-ID\` precisa corresponder ao claim \`custom:tenant_id\` do usuário autenticado.
 
-## Como executar
+O worker possui uma leitura interna não escopada por tenant para localizar uma tarefa pelo ID da licitação. Ela não é exposta pela API HTTP; futuras evoluções podem transportar também o \`tenant_id\` na mensagem para eliminar essa exceção de privilégio interno.
 
-Pré-requisitos: Python 3.11, Docker Desktop e Docker Compose.
+### Processamento assíncrono
 
-```powershell
-Copy-Item .env.example .env
-docker compose up -d postgres redis
-# no ambiente Python configurado:
-python -m pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload
-```
+Após a solicitação de análise, a API publica uma tarefa Celery no Redis. O worker recupera a licitação, aplica a regra de classificação de risco e persiste o novo status. A implementação atual simula a etapa de IA/LLM; a porta de publicação permite substituir essa simulação por um provedor real sem acoplar o domínio ao Celery.
 
-Para API, worker e serviços locais em containers:
+### FinOps e infraestrutura cloud
 
-```powershell
+O Terraform descreve execução em ECS Fargate, PostgreSQL gerenciado, Redis, Cognito, VPC e orçamento AWS opcional. Staging usa uma task por serviço com 0,25 vCPU/0,5 GB e componentes menores; produção parte de duas tasks por serviço com 0,5 vCPU/1 GB e autoscaling de 2 a 10 tasks por CPU. O orçamento mensal é criado quando \`budget_alert_email\` é informado.
+
+## Segurança e auditoria
+
+- Não há chaves AWS, tokens JWT reais, chaves privadas, bancos locais, logs, \`.env\`, ambientes virtuais ou cache de testes rastreados pelo Git.
+- \`.gitignore\` cobre \`.env\`/\`.env.*\` (preservando \`.env.example\`), \`.venv\`, \`.pytest_cache\`, \`*.db\`, \`*.sqlite\`, \`*.sqlite3\` e logs.
+- A varredura do código não encontrou caminhos absolutos locais versionados.
+- \`docker-compose.yml\`, \`.env.example\`, \`alembic.ini\` e os defaults da aplicação contêm as credenciais conhecidas \`goverp/goverp\` exclusivamente para desenvolvimento local. Elas não são segredo de produção e não devem ser reutilizadas fora do ambiente local; produção deve injetar segredos pelo mecanismo da plataforma.
+- \`Bearer dev-token\` só é aceito quando \`ENVIRONMENT=development\`; em qualquer outro ambiente a validação Cognito/JWT permanece obrigatória.
+
+## Qualidade e métricas verificadas
+
+| Evidência | Resultado |
+| --- | --- |
+| Pytest (unidade, arquitetura, autenticação, tenant, relatórios e worker) | **8/8 aprovados** |
+| Integridade arquitetural | Aprovada por \`test_domain_has_no_framework_dependencies\` |
+| Teste de carga Locust | Cenário disponível, sem resultado empírico versionado |
+
+O repositório não contém uma execução auditável de Locust que sustente p50 de 130 ms para consultas, p50 de 310 ms para relatórios, 50 usuários simultâneos ou 0% de erro. Esses valores devem ser publicados somente após uma execução reproduzível, com ambiente, duração, volume de dados e relatório anexados. O cenário está em \`tests/load_test_locust.py\` e exige \`LOCUST_TENANT_IDS\` e \`LOCUST_ACCESS_TOKEN\`.
+
+## Executar localmente
+
+Pré-requisitos: Docker Desktop com engine Linux ativo e Docker Compose.
+
+\`\`\`bash
 docker compose up -d --build
-```
+docker compose exec app alembic upgrade head
+docker compose exec app pytest -v
+\`\`\`
 
-O LocalStack sobe junto e expõe SQS, KMS e Secrets Manager em `localhost:4566`.
+Para chamadas HTTP em desenvolvimento, use \`Authorization: Bearer dev-token\` e o tenant padrão. O bypass não deve ser habilitado em staging ou produção.
 
-```powershell
-docker compose ps
-```
+\`\`\`bash
+curl -X POST http://localhost:8000/api/v1/licitacoes/ \
+  -H "Authorization: Bearer dev-token" \
+  -H "X-Tenant-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{"numero":"PE-001","descricao":"Compra de equipamentos","valor_estimado":"1000.00"}'
+\`\`\`
 
-## AWS e ECS Fargate
+## Fluxo de arquitetura
 
-O diretório [terraform](terraform) provisiona uma VPC em duas AZs, subnets públicas/privadas, NAT gateways, KMS, RDS PostgreSQL, ElastiCache Redis, Cognito User Pool, ALB e dois serviços ECS Fargate: API e worker Celery.
+\`\`\`mermaid
+flowchart LR
+    Client[Cliente / API Consumer] --> HTTP[FastAPI adapters]
+    HTTP --> UC[Application Use Cases]
+    UC --> Domain[Domain Rules + TenantId]
+    UC --> Repo[Repository / Cache / Job ports]
+    Repo --> DB[(PostgreSQL)]
+    Repo --> Cache[(Redis)]
+    Repo --> Queue[Celery / Redis broker]
+    Queue --> Worker[Celery Worker]
+    Worker --> UC
+\`\`\`
 
-| Ambiente | Compute | Banco | Redis | Rede | Autoscaling |
-| --- | --- | --- | --- | --- | --- |
-| staging | 1 task API + 1 worker, 0.25 vCPU/0.5 GB | RDS `db.t4g.micro`, Single-AZ | `cache.t4g.micro`, single-node | 1 NAT Gateway | Sem autoscaling obrigatório |
-| prod | mínimo 2 tasks API + 2 workers | RDS Multi-AZ | 2 nós `cache.r7g.large` | 2 NAT Gateways | API e worker: 2–10 tasks |
+## Estrutura do repositório
 
-```powershell
-Copy-Item terraform\terraform.tfvars.example terraform\terraform.tfvars
-terraform -chdir=terraform init
-terraform -chdir=terraform validate
-terraform -chdir=terraform plan
-terraform -chdir=terraform apply
-```
-
-Para staging, use `terraform -chdir=terraform plan -var='environment=staging'`. Para produção, forneça uma imagem publicada no ECR, certificado ACM e o e-mail de budget:
-
-```powershell
-terraform -chdir=terraform apply `
-    -var='environment=prod' `
-    -var='api_image=ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-api:TAG' `
-    -var='worker_image=ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-worker:TAG' `
-    -var='certificate_arn=arn:aws:acm:...' `
-    -var='budget_alert_email=ops@example.com'
-```
-
-O módulo ECS injeta os valores de RDS, Redis e Cognito diretamente do AWS Secrets Manager nas duas task definitions. Nenhum segredo real deve ser commitado. O budget é criado somente quando `budget_alert_email` é informado.
-
-### Autenticação
-
-As rotas de domínio exigem `Authorization: Bearer <Cognito access token>` e `X-Tenant-ID`. A API baixa as chaves públicas JWKS com cache de processo, valida assinatura RS256, issuer, expiração, `token_use`, `client_id` e o claim imutável `custom:tenant_id`. Um tenant do token diferente do header recebe `403`.
-
-## Endpoints
-
-- `GET /health`
-- `POST/GET /api/v1/licitacoes/`
-- `GET /api/v1/licitacoes/{id}`
-- `POST /api/v1/licitacoes/{id}/analisar-ia`
-- `GET /api/v1/relatorios/gastos-totais`
-
-Todos os endpoints de domínio exigem o header `X-Tenant-ID`.
-
-## Benchmark e tuning
-
-```powershell
-python -m app.db.seed_benchmark --total 500000 --batch-size 5000
-pytest -q
-```
-
-A migração `0002_reporting_indexes` adiciona índices compostos por tenant/status/data e um índice parcial para registros ativos. Os planos `EXPLAIN (ANALYZE, BUFFERS)` antes/depois e a metodologia estão em [benchmarks/explain_analyze_results.md](benchmarks/explain_analyze_results.md).
-
-## Testes
-
-```powershell
-pytest -q
-ruff check .
-```
-
-## Teste de carga e autoscaling ECS
-
-O cenário [tests/load_test_locust.py](tests/load_test_locust.py) alterna requisições entre múltiplos tenants e exercita listagem e relatório. Use somente um access token Cognito de teste:
-
-```powershell
-$env:LOCUST_TENANT_IDS="00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002"
-$env:LOCUST_ACCESS_TOKEN="TOKEN_DE_TESTE"
-locust -f tests/load_test_locust.py --host=https://api.goverp.example.com --headless -u 100 -r 10 -t 10m
-```
-
-Durante o teste, acompanhe `aws ecs describe-services` e as métricas `CPUUtilization`/`MemoryUtilization` no CloudWatch. Em produção, o Application Auto Scaling mantém 2 tasks como mínimo e pode escalar API e worker até 10 tasks conforme CPU de 70%.
+\`\`\`text
+app/domain/          Regras de negócio, entidades e portas
+app/application/     Casos de uso e DTOs
+app/api/             FastAPI, autenticação e schemas
+app/infrastructure/  SQLAlchemy, Redis, Celery e Cognito
+app/workers/         Consumidores Celery
+migrations/          Histórico Alembic
+terraform/           Infraestrutura AWS
+tests/               Testes automatizados e cenário Locust
+\`\`\`

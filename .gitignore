@@ -7,6 +7,13 @@ htmlcov/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
 *.egg-info/
 .mypy_cache/
 .vscode/
