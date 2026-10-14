@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from uuid import UUID
 
+from app.domain.analysis_jobs import AnalysisJob, AnalysisJobCompletionOutcome
 from app.domain.entities import Licitacao
 from app.domain.value_objects import TenantId
 
@@ -17,10 +18,6 @@ class LicitacaoRepository(ABC):
 
     @abstractmethod
     async def get_by_id(self, tenant_id: TenantId, licitacao_id: UUID) -> Licitacao | None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_by_id_unscoped(self, licitacao_id: UUID) -> Licitacao | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -48,7 +45,49 @@ class Cache(ABC):
         raise NotImplementedError
 
 
-class AnalysisJobPublisher(ABC):
+class AnalysisJobStore(ABC):
     @abstractmethod
-    def publish(self, licitacao_id: UUID) -> None:
+    async def schedule_analysis(
+        self, tenant_id: TenantId, licitacao_id: UUID, correlation_id: UUID
+    ) -> tuple[Licitacao, AnalysisJob] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_analysis_job(
+        self,
+        job_id: UUID,
+        tenant_id: TenantId,
+        lock_timeout_seconds: int,
+        max_retries: int,
+    ) -> AnalysisJob | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_analysis_job_dispatch(
+        self, job_id: UUID, tenant_id: TenantId, lease_seconds: int
+    ) -> AnalysisJob | None:
+        """Lease a durable outbox record before publishing it to the broker."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def release_analysis_job_dispatch(self, job: AnalysisJob) -> bool:
+        """Release a relay lease after a synchronous broker publish failure."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    async def complete_analysis_job(self, job: AnalysisJob) -> AnalysisJobCompletionOutcome:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def fail_analysis_job(
+        self, job: AnalysisJob, error_code: str, retry_delay_seconds: int | None
+    ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_dispatchable_analysis_jobs(
+        self, limit: int, lock_timeout_seconds: int
+    ) -> list[AnalysisJob]:
         raise NotImplementedError

@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
 from app.api import dependencies
+from app.core.config import Settings
 from app.infrastructure.auth import cognito
 from app.infrastructure.auth.cognito import CognitoTokenVerifier
 
@@ -28,6 +29,30 @@ async def test_development_token_uses_local_tenant_without_cognito() -> None:
     }
 
 
+def test_settings_defaults_to_production_without_environment_file(monkeypatch) -> None:
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    assert Settings(_env_file=None).environment == "production"
+
+
+def test_analysis_timing_settings_reject_non_positive_values() -> None:
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, analysis_job_lock_timeout_seconds=120)
+
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, analysis_dispatch_interval_seconds=0)
+
+
+@pytest.mark.asyncio
+async def test_missing_environment_does_not_accept_development_token() -> None:
+    settings = SimpleNamespace(
+        default_tenant_id=TENANT_ID,
+        cognito_jwks_url="https://cognito.test/.well-known/jwks.json",
+    )
+
+    with pytest.raises(Exception):
+        await CognitoTokenVerifier(settings).verify("dev-token")
+
+
 @pytest.mark.asyncio
 async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
     settings = SimpleNamespace(
@@ -35,7 +60,7 @@ async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
         cognito_jwks_url="https://cognito.test/.well-known/jwks.json",
         cognito_issuer="https://cognito.test/pool",
         cognito_app_client_id="client-id",
-        cognito_token_use="access",
+        cognito_token_use="id",
         jwks_cache_ttl_seconds=3600,
     )
     monkeypatch.setattr(cognito, "get_settings", lambda: settings)
@@ -49,8 +74,8 @@ async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
         lambda *args, **kwargs: {
             "iss": settings.cognito_issuer,
             "sub": "user-1",
-            "client_id": settings.cognito_app_client_id,
-            "token_use": "access",
+            "aud": settings.cognito_app_client_id,
+            "token_use": "id",
             "custom:tenant_id": TENANT_ID,
         },
     )
@@ -58,7 +83,7 @@ async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     user = await dependencies.get_current_user(request, credentials)
-    tenant = await dependencies.get_tenant_id(TENANT_ID, user)
+    tenant = await dependencies.get_tenant_id(request, TENANT_ID, user)
 
     assert user["sub"] == "user-1"
     assert tenant == UUID(TENANT_ID)
@@ -69,6 +94,7 @@ async def test_cognito_jwt_and_tenant_claim(monkeypatch) -> None:
 async def test_tenant_claim_mismatch_is_forbidden() -> None:
     with pytest.raises(HTTPException) as error:
         await dependencies.get_tenant_id(
+            Request({"type": "http", "headers": []}),
             TENANT_ID,
             {"custom:tenant_id": "00000000-0000-0000-0000-000000000002"},
         )

@@ -3,12 +3,13 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 locals {
-  is_production = var.environment == "prod"
-  api_cpu       = local.is_production ? 512 : 256
-  api_memory    = local.is_production ? 1024 : 512
-  worker_cpu    = local.is_production ? 512 : 256
-  worker_memory = local.is_production ? 1024 : 512
-  desired_count = local.is_production ? 2 : 1
+  is_production           = var.environment == "prod"
+  api_cpu                 = local.is_production ? 512 : 256
+  api_memory              = local.is_production ? 1024 : 512
+  worker_cpu              = local.is_production ? 512 : 256
+  worker_memory           = local.is_production ? 1024 : 512
+  desired_count           = local.is_production ? 2 : 1
+  application_environment = local.is_production ? "production" : "staging"
 }
 
 resource "aws_ecs_cluster" "this" {
@@ -27,6 +28,16 @@ resource "aws_cloudwatch_log_group" "api" {
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${var.project_name}/${var.environment}/worker"
+  retention_in_days = local.is_production ? 30 : 7
+}
+
+resource "aws_cloudwatch_log_group" "scheduler" {
+  name              = "/ecs/${var.project_name}/${var.environment}/scheduler"
+  retention_in_days = local.is_production ? 30 : 7
+}
+
+resource "aws_cloudwatch_log_group" "migrations" {
+  name              = "/ecs/${var.project_name}/${var.environment}/migrations"
   retention_in_days = local.is_production ? 30 : 7
 }
 
@@ -77,6 +88,24 @@ resource "aws_security_group" "service" {
   }
 }
 
+resource "aws_vpc_security_group_ingress_rule" "database_from_service" {
+  description                  = "PostgreSQL access from SerenaERP ECS tasks"
+  security_group_id            = var.database_security_group_id
+  referenced_security_group_id = aws_security_group.service.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_from_service" {
+  description                  = "Redis access from SerenaERP ECS tasks"
+  security_group_id            = var.redis_security_group_id
+  referenced_security_group_id = aws_security_group.service.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+}
+
 data "aws_iam_policy_document" "execution_assume" {
   statement {
     effect  = "Allow"
@@ -104,12 +133,62 @@ data "aws_iam_policy_document" "execution_secrets" {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [var.db_secret_arn, var.redis_secret_arn, var.cognito_secret_arn]
   }
+
+  statement {
+    sid       = "DecryptRuntimeSecretsThroughSecretsManager"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [var.data_kms_key_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${data.aws_region.current.region}.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "execution_secrets" {
   name   = "read-runtime-secrets"
   role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.execution_secrets.json
+}
+
+resource "aws_iam_role" "migration_execution" {
+  name               = "${var.project_name}-${var.environment}-migration-execution"
+  assume_role_policy = data.aws_iam_policy_document.execution_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "migration_execution_ecr" {
+  role       = aws_iam_role.migration_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+data "aws_iam_policy_document" "migration_execution_secrets" {
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.db_secret_arn]
+  }
+
+  statement {
+    sid       = "DecryptMigrationDatabaseSecretThroughSecretsManager"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [var.data_kms_key_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${data.aws_region.current.region}.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "migration_execution_secrets" {
+  name   = "read-migration-database-secret"
+  role   = aws_iam_role.migration_execution.id
+  policy = data.aws_iam_policy_document.migration_execution_secrets.json
 }
 
 resource "aws_iam_role" "task" {
@@ -120,13 +199,17 @@ resource "aws_iam_role" "task" {
 locals {
   common_secrets = [
     { name = "DATABASE_URL", valueFrom = "${var.db_secret_arn}:url::" },
-    { name = "REDIS_URL", valueFrom = "${var.redis_secret_arn}:url::" },
-    { name = "CELERY_BROKER_URL", valueFrom = "${var.redis_secret_arn}:url::" },
-    { name = "CELERY_RESULT_BACKEND", valueFrom = "${var.redis_secret_arn}:url::" },
+    { name = "REDIS_URL", valueFrom = "${var.redis_secret_arn}:cache_url::" },
+    { name = "CELERY_BROKER_URL", valueFrom = "${var.redis_secret_arn}:celery_broker_url::" },
+    { name = "CELERY_RESULT_BACKEND", valueFrom = "${var.redis_secret_arn}:celery_backend_url::" },
     { name = "AWS_REGION", valueFrom = "${var.cognito_secret_arn}:AWS_REGION::" },
     { name = "COGNITO_USER_POOL_ID", valueFrom = "${var.cognito_secret_arn}:COGNITO_USER_POOL_ID::" },
     { name = "COGNITO_APP_CLIENT_ID", valueFrom = "${var.cognito_secret_arn}:COGNITO_APP_CLIENT_ID::" },
     { name = "COGNITO_TOKEN_USE", valueFrom = "${var.cognito_secret_arn}:COGNITO_TOKEN_USE::" },
+  ]
+
+  migration_secrets = [
+    { name = "DATABASE_URL", valueFrom = "${var.db_secret_arn}:url::" },
   ]
 }
 
@@ -146,7 +229,7 @@ resource "aws_ecs_task_definition" "api" {
     command      = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     portMappings = [{ containerPort = 8000, protocol = "tcp" }]
     secrets      = local.common_secrets
-    environment  = [{ name = "ENVIRONMENT", value = var.environment }]
+    environment  = [{ name = "ENVIRONMENT", value = local.application_environment }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -180,13 +263,72 @@ resource "aws_ecs_task_definition" "worker" {
     essential   = true
     command     = ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=INFO"]
     secrets     = local.common_secrets
-    environment = [{ name = "ENVIRONMENT", value = var.environment }]
+    environment = [{ name = "ENVIRONMENT", value = local.application_environment }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
         "awslogs-group"         = aws_cloudwatch_log_group.worker.name
         "awslogs-region"        = data.aws_region.current.region
         "awslogs-stream-prefix" = "worker"
+      }
+    }
+  }])
+}
+
+# Exactly one scheduler relays the durable analysis outbox. Worker-side claims
+# remain idempotent, but a singleton avoids needless duplicate dispatches.
+resource "aws_ecs_task_definition" "scheduler" {
+  family                   = "${var.project_name}-${var.environment}-scheduler"
+  cpu                      = 256
+  memory                   = 512
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name        = "scheduler"
+    image       = var.worker_image
+    essential   = true
+    command     = ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    secrets     = local.common_secrets
+    environment = [{ name = "ENVIRONMENT", value = local.application_environment }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.scheduler.name
+        "awslogs-region"        = data.aws_region.current.region
+        "awslogs-stream-prefix" = "scheduler"
+      }
+    }
+  }])
+}
+
+# This task definition is intentionally not attached to an ECS service. The deployment
+# pipeline must run one migration task and wait for a successful exit before rolling out
+# a task definition that depends on the new schema.
+resource "aws_ecs_task_definition" "migrations" {
+  family                   = "${var.project_name}-${var.environment}-migrations"
+  cpu                      = local.api_cpu
+  memory                   = local.api_memory
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = aws_iam_role.migration_execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name        = "migrations"
+    image       = var.api_image
+    essential   = true
+    command     = ["alembic", "upgrade", "head"]
+    secrets     = local.migration_secrets
+    environment = [{ name = "ENVIRONMENT", value = local.application_environment }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.migrations.name
+        "awslogs-region"        = data.aws_region.current.region
+        "awslogs-stream-prefix" = "migrations"
       }
     }
   }])
@@ -208,7 +350,7 @@ resource "aws_lb_target_group" "api" {
   vpc_id      = var.vpc_id
 
   health_check {
-    path                = "/health"
+    path                = "/ready"
     matcher             = "200"
     interval            = 30
     timeout             = 5
@@ -223,28 +365,16 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type = var.certificate_arn == "" ? "forward" : "redirect"
-    dynamic "forward" {
-      for_each = var.certificate_arn == "" ? [1] : []
-      content {
-        target_group {
-          arn = aws_lb_target_group.api.arn
-        }
-      }
-    }
-    dynamic "redirect" {
-      for_each = var.certificate_arn == "" ? [] : [1]
-      content {
-        port        = "443"
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
     }
   }
 }
 
 resource "aws_lb_listener" "https" {
-  count             = var.certificate_arn == "" ? 0 : 1
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
@@ -276,7 +406,19 @@ resource "aws_ecs_service" "api" {
     container_port   = 8000
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [
+    aws_lb_listener.https,
+    aws_vpc_security_group_ingress_rule.database_from_service,
+    aws_vpc_security_group_ingress_rule.redis_from_service,
+  ]
+
+  # A service rollout is deliberately performed by scripts/ecs-rollout.sh only
+  # after the one-shot migration task exits successfully. Terraform still
+  # registers new task definitions, but cannot race the schema gate by updating
+  # this service during a normal infrastructure apply.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_service" "worker" {
@@ -290,6 +432,38 @@ resource "aws_ecs_service" "worker" {
     subnets          = var.private_subnet_ids
     security_groups  = [aws_security_group.service.id]
     assign_public_ip = false
+  }
+
+  depends_on = [
+    aws_vpc_security_group_ingress_rule.database_from_service,
+    aws_vpc_security_group_ingress_rule.redis_from_service,
+  ]
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
+
+resource "aws_ecs_service" "scheduler" {
+  name            = "${var.project_name}-${var.environment}-scheduler"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.scheduler.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.service.id]
+    assign_public_ip = false
+  }
+
+  depends_on = [
+    aws_vpc_security_group_ingress_rule.database_from_service,
+    aws_vpc_security_group_ingress_rule.redis_from_service,
+  ]
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
 

@@ -1,0 +1,8 @@
+# Copy this file to backend.hcl, fill in organization-controlled values, and
+# keep backend.hcl out of version control. Create the bucket/table and their
+# restricted IAM policies through the platform bootstrap process first.
+bucket         = "REPLACE_WITH_ENCRYPTED_TERRAFORM_STATE_BUCKET"
+key            = "serenaerp/production/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "REPLACE_WITH_TERRAFORM_LOCK_TABLE"
+encrypt        = true

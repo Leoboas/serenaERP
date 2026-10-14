@@ -11,8 +11,38 @@ permissions:
 
 jobs:
   python:
-    name: Python lint and tests
+    name: Python, migrations and tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: goverp
+          POSTGRES_USER: goverp
+          POSTGRES_PASSWORD: goverp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U goverp -d goverp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://goverp:goverp@localhost:5432/goverp
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      RUN_POSTGRES_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,21 +51,30 @@ jobs:
           cache: pip
       - name: Install project
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
-      - name: Ruff
+      - name: Lint
         run: ruff check .
+      - name: Apply migrations on PostgreSQL
+        run: alembic upgrade head
+      - name: Verify migration head
+        run: alembic current --check-heads
       - name: Tests
         run: pytest -q --cov=app --cov-report=term-missing
+      - name: Build runtime image as non-root
+        run: docker build --target runtime --tag serenaerp:ci .
 
   terraform:
-    name: Terraform validate
+    name: Terraform formatting and validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.6"
+      - name: Format check
+        run: terraform -chdir=terraform fmt -check -recursive
       - name: Init without backend
         run: terraform -chdir=terraform init -backend=false
       - name: Validate
         run: terraform -chdir=terraform validate
-
+      - name: Validate schema-gated rollout script
+        run: bash -n scripts/ecs-rollout.sh

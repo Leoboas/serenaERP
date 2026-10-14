@@ -73,8 +73,6 @@ async def client(monkeypatch) -> AsyncIterator[AsyncClient]:
 
     monkeypatch.setattr("app.api.licitacoes.get_redis", get_fake_redis)
     monkeypatch.setattr("app.api.relatorios.get_redis", get_fake_redis)
-    monkeypatch.setattr("app.api.licitacoes.analisar_licitacao.delay", lambda _: None)
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as test_client:
         yield test_client
 

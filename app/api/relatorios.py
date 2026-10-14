@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_tenant_id
 from app.application.use_cases import GetGastosTotais
+from app.core.observability import log_event
 from app.infrastructure.cache import RedisCache
 from app.infrastructure.persistence.repositories import SqlAlchemyLicitacaoRepository
 from app.infrastructure.persistence.session import get_db_session
@@ -12,8 +13,6 @@ from app.infrastructure.redis import get_redis
 from app.schemas.licitacao import RelatorioGastos
 
 router = APIRouter(prefix="/api/v1/relatorios", tags=["relatorios"])
-
-
 @router.get("/gastos-totais", response_model=RelatorioGastos)
 async def gastos_totais(
     tenant_id: UUID = Depends(get_tenant_id),
@@ -25,4 +24,7 @@ async def gastos_totais(
         report = await GetGastosTotais(SqlAlchemyLicitacaoRepository(session), cache).execute(tenant_id)
         return RelatorioGastos.model_validate(report, from_attributes=True)
     finally:
-        await cache.close()
+        try:
+            await cache.close()
+        except Exception as exc:
+            log_event("redis_close_failed", level=30, error_type=type(exc).__name__)

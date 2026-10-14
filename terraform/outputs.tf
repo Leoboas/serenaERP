@@ -32,3 +32,35 @@ output "ecs_worker_service_name" {
   value = module.ecs.worker_service_name
 }
 
+output "ecs_scheduler_service_name" {
+  value = module.ecs.scheduler_service_name
+}
+
+output "ecs_cluster_name" {
+  value = module.ecs.cluster_name
+}
+
+output "ecs_migration_task_definition_arn" {
+  value = module.ecs.migration_task_definition_arn
+}
+
+output "ecs_api_task_definition_arn" {
+  value = module.ecs.api_task_definition_arn
+}
+
+output "ecs_worker_task_definition_arn" {
+  value = module.ecs.worker_task_definition_arn
+}
+
+output "ecs_scheduler_task_definition_arn" {
+  value = module.ecs.scheduler_task_definition_arn
+}
+
+output "ecs_service_security_group_id" {
+  value = module.ecs.service_security_group_id
+}
+
+output "private_subnet_ids" {
+  value = module.vpc.private_subnet_ids
+}
+

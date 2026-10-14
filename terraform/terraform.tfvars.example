@@ -4,5 +4,7 @@ environment      = "staging"
 availability_zones = ["us-east-1a", "us-east-1b"]
 budget_alert_email = ""
 budget_limit_usd   = 200
-api_image          = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-api:latest"
-worker_image       = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-worker:latest"
+# Use the immutable digest emitted by the CI image build; never use :latest.
+api_image          = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+worker_image       = "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/goverp-worker@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+certificate_arn    = "arn:aws:acm:us-east-1:ACCOUNT:certificate/REPLACE_ME"

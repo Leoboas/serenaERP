@@ -76,18 +76,33 @@ variable "budget_limit_usd" {
 }
 
 variable "api_image" {
-  type    = string
-  default = "goverp-core-ai:latest"
+  type        = string
+  description = "Immutable OCI image reference pinned by SHA-256 digest."
+
+  validation {
+    condition     = can(regex("^.+@sha256:[0-9a-fA-F]{64}$", var.api_image))
+    error_message = "api_image deve usar um digest imutavel no formato repositorio@sha256:<64-hex>."
+  }
 }
 
 variable "worker_image" {
-  type    = string
-  default = "goverp-core-ai:latest"
+  type        = string
+  description = "Immutable OCI image reference pinned by SHA-256 digest."
+
+  validation {
+    condition     = can(regex("^.+@sha256:[0-9a-fA-F]{64}$", var.worker_image))
+    error_message = "worker_image deve usar um digest imutavel no formato repositorio@sha256:<64-hex>."
+  }
 }
 
 variable "certificate_arn" {
-  type    = string
-  default = ""
+  type        = string
+  description = "ACM certificate ARN used by the public HTTPS listener."
+
+  validation {
+    condition     = trimspace(var.certificate_arn) != ""
+    error_message = "certificate_arn e obrigatorio; a API publica nao pode aceitar trafego HTTP sem TLS."
+  }
 }
 
 variable "domain_name" {

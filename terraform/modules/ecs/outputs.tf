@@ -1,5 +1,11 @@
 output "cluster_name" { value = aws_ecs_cluster.this.name }
 output "api_service_name" { value = aws_ecs_service.api.name }
 output "worker_service_name" { value = aws_ecs_service.worker.name }
+output "scheduler_service_name" { value = aws_ecs_service.scheduler.name }
 output "alb_dns_name" { value = aws_lb.this.dns_name }
 output "execution_role_arn" { value = aws_iam_role.execution.arn }
+output "migration_task_definition_arn" { value = aws_ecs_task_definition.migrations.arn }
+output "api_task_definition_arn" { value = aws_ecs_task_definition.api.arn }
+output "worker_task_definition_arn" { value = aws_ecs_task_definition.worker.arn }
+output "scheduler_task_definition_arn" { value = aws_ecs_task_definition.scheduler.arn }
+output "service_security_group_id" { value = aws_security_group.service.id }

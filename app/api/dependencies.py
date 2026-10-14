@@ -24,6 +24,7 @@ async def get_current_user(
 
 
 async def get_tenant_id(
+    request: Request,
     x_tenant_id: str | None = Header(default=None),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> UUID:
@@ -38,4 +39,5 @@ async def get_tenant_id(
         raise HTTPException(status_code=400, detail="X-Tenant-ID deve ser um UUID válido") from exc
     if user.get("custom:tenant_id") != str(tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant não autorizado")
+    request.state.tenant_id = tenant_id
     return tenant_id

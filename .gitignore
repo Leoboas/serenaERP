@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+build/
 .ruff_cache/
 .coverage
 htmlcov/
@@ -23,6 +24,7 @@ benchmarks/*.json
 *.key
 *.crt
 terraform.tfvars
+terraform/backend.hcl
 *.tfstate
 *.tfstate.*
 .terraform/

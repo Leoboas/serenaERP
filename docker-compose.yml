@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: goverp
       POSTGRES_PASSWORD: goverp
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -27,18 +27,33 @@ services:
 
   localstack:
     image: localstack/localstack:latest
+    profiles: ["aws-emulation"]
     environment:
       SERVICES: sqs,kms,secretsmanager
       AWS_DEFAULT_REGION: us-east-1
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     volumes:
       - localstack_data:/var/lib/localstack
-      - /var/run/docker.sock:/var/run/docker.sock
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    command: alembic upgrade head
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+asyncpg://goverp:goverp@postgres:5432/goverp
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   app:
-    build: .
+    build:
+      context: .
+      target: development
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: postgresql+asyncpg://goverp:goverp@postgres:5432/goverp
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -46,18 +61,30 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID:-}
+      RUN_POSTGRES_INTEGRATION: ${RUN_POSTGRES_INTEGRATION:-1}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker:
-    build: .
+    build:
+      context: .
+      target: runtime
     command: celery -A app.workers.celery_app worker --loglevel=info
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: postgresql+asyncpg://goverp:goverp@postgres:5432/goverp
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -67,6 +94,27 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  beat:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+asyncpg://goverp:goverp@postgres:5432/goverp
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:

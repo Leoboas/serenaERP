@@ -1,10 +1,15 @@
+locals {
+  name_prefix        = "${var.project_name}-${var.environment}"
+  encoded_auth_token = urlencode(var.auth_token)
+}
+
 resource "aws_elasticache_subnet_group" "this" {
-  name       = "${var.project_name}-redis"
+  name       = "${local.name_prefix}-redis"
   subnet_ids = var.private_subnet_ids
 }
 
 resource "aws_elasticache_replication_group" "this" {
-  replication_group_id       = var.project_name
+  replication_group_id       = local.name_prefix
   description                = "Celery broker and API cache"
   engine                     = "redis"
   engine_version             = "7.1"
@@ -22,16 +27,19 @@ resource "aws_elasticache_replication_group" "this" {
 }
 
 resource "aws_secretsmanager_secret" "this" {
-  name       = "${var.project_name}/redis"
+  name       = "${local.name_prefix}/redis"
   kms_key_id = var.kms_key_arn
 }
 
 resource "aws_secretsmanager_secret_version" "this" {
   secret_id = aws_secretsmanager_secret.this.id
   secret_string = jsonencode({
-    host       = aws_elasticache_replication_group.this.primary_endpoint_address
-    port       = 6379
-    auth_token = var.auth_token
-    url        = "rediss://:${var.auth_token}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379/0"
+    host               = aws_elasticache_replication_group.this.primary_endpoint_address
+    port               = 6379
+    auth_token         = var.auth_token
+    url                = "rediss://:${local.encoded_auth_token}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379/0"
+    cache_url          = "rediss://:${local.encoded_auth_token}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379/0"
+    celery_broker_url  = "rediss://:${local.encoded_auth_token}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379/1"
+    celery_backend_url = "rediss://:${local.encoded_auth_token}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379/2"
   })
 }

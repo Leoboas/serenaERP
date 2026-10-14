@@ -1,6 +1,10 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # Backend values are account-specific and intentionally live outside source.
+  # Copy backend.hcl.example to an ignored backend.hcl before a real init.
+  backend "s3" {}
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"

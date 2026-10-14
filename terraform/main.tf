@@ -11,6 +11,7 @@ resource "random_password" "redis_auth" {
 module "vpc" {
   source             = "./modules/vpc"
   project_name       = var.project_name
+  environment        = var.environment
   vpc_cidr           = var.vpc_cidr
   availability_zones = var.availability_zones
   nat_gateway_count  = var.environment == "staging" ? 1 : 2
@@ -19,11 +20,13 @@ module "vpc" {
 module "cognito" {
   source       = "./modules/cognito"
   project_name = var.project_name
+  environment  = var.environment
 }
 
 module "rds" {
   source              = "./modules/rds"
   project_name        = var.project_name
+  environment         = var.environment
   db_name             = var.db_name
   db_username         = var.db_username
   db_password         = random_password.db.result
@@ -38,6 +41,7 @@ module "rds" {
 module "elasticache" {
   source             = "./modules/elasticache"
   project_name       = var.project_name
+  environment        = var.environment
   private_subnet_ids = module.vpc.private_subnet_ids
   security_group_id  = module.vpc.redis_security_group_id
   auth_token         = random_password.redis_auth.result
@@ -48,19 +52,22 @@ module "elasticache" {
 }
 
 module "ecs" {
-  source             = "./modules/ecs"
-  project_name       = var.project_name
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  public_subnet_ids  = module.vpc.public_subnet_ids
-  private_subnet_ids = module.vpc.private_subnet_ids
-  api_image          = var.api_image
-  worker_image       = var.worker_image
-  db_secret_arn      = module.rds.secret_arn
-  redis_secret_arn   = module.elasticache.secret_arn
-  cognito_secret_arn = module.cognito.application_secret_arn
-  certificate_arn    = var.certificate_arn
-  domain_name        = var.domain_name
+  source                     = "./modules/ecs"
+  project_name               = var.project_name
+  environment                = var.environment
+  vpc_id                     = module.vpc.vpc_id
+  public_subnet_ids          = module.vpc.public_subnet_ids
+  private_subnet_ids         = module.vpc.private_subnet_ids
+  api_image                  = var.api_image
+  worker_image               = var.worker_image
+  db_secret_arn              = module.rds.secret_arn
+  redis_secret_arn           = module.elasticache.secret_arn
+  cognito_secret_arn         = module.cognito.application_secret_arn
+  data_kms_key_arn           = module.vpc.data_kms_key_arn
+  database_security_group_id = module.vpc.database_security_group_id
+  redis_security_group_id    = module.vpc.redis_security_group_id
+  certificate_arn            = var.certificate_arn
+  domain_name                = var.domain_name
 }
 
 resource "aws_budgets_budget" "monthly" {

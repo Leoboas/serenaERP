@@ -1,10 +1,25 @@
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+}
+
 resource "aws_db_subnet_group" "this" {
-  name       = "${var.project_name}-db"
+  name       = "${local.name_prefix}-db"
   subnet_ids = var.private_subnet_ids
 }
 
+resource "aws_db_parameter_group" "this" {
+  name   = "${local.name_prefix}-postgres15"
+  family = "postgres15"
+
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
+  }
+}
+
 resource "aws_db_instance" "this" {
-  identifier                = var.project_name
+  identifier                = local.name_prefix
   engine                    = "postgres"
   engine_version            = "15.10"
   instance_class            = var.db_instance_class
@@ -19,17 +34,18 @@ resource "aws_db_instance" "this" {
   password                  = var.db_password
   port                      = 5432
   db_subnet_group_name      = aws_db_subnet_group.this.name
+  parameter_group_name      = aws_db_parameter_group.this.name
   vpc_security_group_ids    = [var.security_group_id]
   backup_retention_period   = 7
   deletion_protection       = var.deletion_protection
   skip_final_snapshot       = false
-  final_snapshot_identifier = "${var.project_name}-final"
+  final_snapshot_identifier = "${local.name_prefix}-final"
   publicly_accessible       = false
   apply_immediately         = false
 }
 
 resource "aws_secretsmanager_secret" "this" {
-  name       = "${var.project_name}/rds"
+  name       = "${local.name_prefix}/rds"
   kms_key_id = var.kms_key_arn
 }
 
@@ -41,6 +57,6 @@ resource "aws_secretsmanager_secret_version" "this" {
     dbname   = var.db_name
     username = var.db_username
     password = var.db_password
-    url      = "postgresql+asyncpg://${var.db_username}:${var.db_password}@${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}"
+    url      = "postgresql+asyncpg://${urlencode(var.db_username)}:${urlencode(var.db_password)}@${aws_db_instance.this.address}:${aws_db_instance.this.port}/${var.db_name}?ssl=require"
   })
 }

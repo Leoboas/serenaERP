@@ -1,5 +1,9 @@
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+}
+
 resource "aws_cognito_user_pool" "this" {
-  name                     = "${var.project_name}-users"
+  name                     = "${local.name_prefix}-users"
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
@@ -24,6 +28,13 @@ resource "aws_cognito_user_pool" "this" {
     }
   }
 
+  # Tenant assignment is an authorization boundary. Accounts are provisioned
+  # through an authenticated administrative workflow, never self-registered
+  # with a caller-controlled tenant UUID.
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
+
   account_recovery_setting {
     recovery_mechanism {
       name     = "verified_email"
@@ -33,12 +44,14 @@ resource "aws_cognito_user_pool" "this" {
 }
 
 resource "aws_cognito_user_pool_client" "this" {
-  name                          = "${var.project_name}-api"
+  name                          = "${local.name_prefix}-api"
   user_pool_id                  = aws_cognito_user_pool.this.id
   generate_secret               = true
-  explicit_auth_flows           = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_SRP_AUTH"]
+  explicit_auth_flows           = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
   enable_token_revocation       = true
   prevent_user_existence_errors = "ENABLED"
+  read_attributes               = ["email", "custom:tenant_id"]
+  write_attributes              = ["email"]
   access_token_validity         = 60
   id_token_validity             = 60
   refresh_token_validity        = 30
@@ -50,7 +63,7 @@ resource "aws_cognito_user_pool_client" "this" {
 }
 
 resource "aws_secretsmanager_secret" "application" {
-  name = "${var.project_name}/cognito"
+  name = "${local.name_prefix}/cognito"
 }
 
 resource "aws_secretsmanager_secret_version" "application" {
@@ -59,6 +72,8 @@ resource "aws_secretsmanager_secret_version" "application" {
     AWS_REGION            = data.aws_region.current.region
     COGNITO_USER_POOL_ID  = aws_cognito_user_pool.this.id
     COGNITO_APP_CLIENT_ID = aws_cognito_user_pool_client.this.id
-    COGNITO_TOKEN_USE     = "access"
+    # Cognito emits immutable user attributes such as tenant_id in ID tokens.
+    # A pre-token Lambda would be required to put it in access tokens.
+    COGNITO_TOKEN_USE = "id"
   })
 }
